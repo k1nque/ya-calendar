@@ -1,5 +1,6 @@
+import logging
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import hashlib
 import redis
 from icalendar import Calendar
@@ -27,9 +28,13 @@ PASSWORD = settings.CALDAV_PASSWORD
 
 
 def get_principal(username, leg_token):
-    client = caldav.DAVClient(url=WEBSITE, username=username, password=leg_token)
-    principal = client.principal()
-    return principal
+    try:
+        client = caldav.DAVClient(url=WEBSITE, username=username, password=leg_token)
+        principal = client.principal()
+        return principal
+    except Exception as e:
+        print(f"Error getting principal: {e}")
+        raise
 
 
 def schedule_lesson(db, event_uid, summary, start_dt, end_dt, description):
@@ -37,7 +42,7 @@ def schedule_lesson(db, event_uid, summary, start_dt, end_dt, description):
     lesson, changed = crud.upsert_lesson(db, event_uid=event_uid, summary=summary, start=start_dt, end=end_dt, description=description, student=student)
 
     notify_time = start_dt - timedelta(minutes=30)
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     if notify_time <= now:
         return
 
@@ -64,27 +69,39 @@ def schedule_lesson(db, event_uid, summary, start_dt, end_dt, description):
 
 
 def parse_and_schedule():
-    principal = get_principal(EMAIL, PASSWORD)
-    cal = principal.calendar(name="Мои события")
-    events = cal.date_search(start=datetime.now(), end=datetime.now() + timedelta(days=7))
-    db = SessionLocal()
-    for evt in events:
-        calobj = Calendar.from_ical(evt.data)
-        for component in calobj.walk():
-            if component.name == "VEVENT":
-                summary = str(component.get('summary'))
-                uid = str(component.get('uid') or hashlib.sha1((summary+str(component.get('dtstart'))).encode()).hexdigest())
-                start = component.get('dtstart').dt
-                end = component.get('dtend').dt
-                description = str(component.get('description') or '')
-                schedule_lesson(db, uid, summary, start, end, description)
-    db.close()
+    try:
+        principal = get_principal(EMAIL, PASSWORD)
+        cal = principal.calendar(name="Мои события")
+        start_date = datetime.now(timezone.utc)
+        end_date = start_date + timedelta(days=7)
+        events = cal.search(start=start_date, end=end_date)
+        db = SessionLocal()
+        for evt in events:
+            calobj = Calendar.from_ical(evt.data)
+            for component in calobj.walk():
+                if component.name == "VEVENT":
+                    summary = str(component.get('summary'))
+                    uid = str(component.get('uid') or hashlib.sha1((summary+str(component.get('dtstart'))).encode()).hexdigest())
+                    start = component.get('dtstart').dt
+                    end = component.get('dtend').dt
+                    description = str(component.get('description') or '')
+                    schedule_lesson(db, uid, summary, start, end, description)
+        db.close()
+    except Exception as e:
+        print(f"Worker error in parse_and_schedule: {e}")
 
 
 if __name__ == '__main__':
+    # Suppress noisy CalDAV CRITICAL logs about 'Expected some valid XML...'
+    class CaldavNoiseFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            msg = str(record.getMessage())
+            return 'Expected some valid XML from the server' not in msg
+
+    logging.getLogger().addFilter(CaldavNoiseFilter())
     while True:
         try:
             parse_and_schedule()
         except Exception as e:
-            print('Worker error:', e)
+            logging.error('Worker error: %s', e)
         time.sleep(settings.WORKER_POLL_SECONDS)

@@ -1,6 +1,9 @@
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
+    POSTGRES_DB: str
+    POSTGRES_USER: str
+    POSTGRES_PASSWORD: str
     DATABASE_URL: str
     REDIS_URL: str
     TG_BOT_TOKEN: str
