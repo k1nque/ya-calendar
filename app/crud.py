@@ -56,3 +56,7 @@ def get_lesson(db: Session, lesson_id: int):
 
 def list_students(db: Session):
     return db.query(models.Student).order_by(models.Student.summary).all()
+
+def get_student_by_tg_user_id(db: Session, tg_user_id: str):
+    link = db.query(models.TgLink).filter_by(tg_user_id=tg_user_id).first()
+    return db.query(models.Student).filter_by(id=link.student_id).first() if link else None

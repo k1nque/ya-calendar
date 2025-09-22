@@ -13,6 +13,14 @@ models.Base.metadata.create_all(bind=engine)
 bot = Bot(token=settings.TG_BOT_TOKEN)
 dp = Dispatcher()
 app = FastAPI()
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('bot.log', encoding='utf-8')
+    ]
+)
 logger = logging.getLogger(__name__)
 
 @dp.message(F.text == '/start')
@@ -22,8 +30,17 @@ async def cmd_start(message: types.Message):
         await message.answer('Привет, администратор! Вы можете подтверждать привязки и получать служебные уведомления.')
         return
 
-    await message.answer('Привет! Спасибо, что подключились. Жду подтверждения от администратора.')
     db = SessionLocal()
+    
+    # Проверяем, есть ли уже привязка у этого пользователя
+    student = crud.get_student_by_tg_user_id(db, str(message.from_user.id))
+    logger.debug(f"Existing link for user {message.from_user.id}: {student}")
+    if student:
+        db.close()
+        await message.answer(f'Привет! Вы уже привязаны к ученику: {student.summary}. Вы будете получать уведомления о занятиях.')
+        return
+
+    await message.answer('Привет! Спасибо, что подключились. Жду подтверждения от администратора.')
     students = crud.list_students(db)
     db.close()
     if not students:
