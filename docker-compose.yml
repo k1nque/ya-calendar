@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - appnet
+
+  redis:
+    image: redis:7
+    restart: always
+    networks:
+      - appnet
+
+  worker:
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
+    env_file: .env
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - appnet
+
+  celery:
+    build:
+      context: .
+      dockerfile: services/celery_worker/Dockerfile
+    env_file: .env
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - appnet
+
+  bot:
+    build:
+      context: .
+      dockerfile: services/bot/Dockerfile
+    env_file: .env
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "8080:8080"
+    networks:
+      - appnet
+
+volumes:
+  pgdata:
+
+networks:
+  appnet:
+    driver: bridge

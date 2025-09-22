@@ -1,0 +1,9 @@
+caldav>=2.0.1
+icalendar>=6.3.1
+requests>=2.32.5
+redis>=4.6
+SQLAlchemy>=1.4
+psycopg2-binary>=2.9
+pydantic>=1.10
+pydantic-settings
+celery[redis]>=5.3

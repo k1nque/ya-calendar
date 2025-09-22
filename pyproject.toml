@@ -1,0 +1,19 @@
+[project]
+name = "ya-calendar-perevernu"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "aiogram>=3.22.0",
+    "caldav>=2.0.1",
+    "celery>=5.5.3",
+    "fastapi>=0.116.1",
+    "icalendar>=6.3.1",
+    "psycopg2-binary>=2.9.10",
+    "pydantic-settings>=2.10.1",
+    "redis>=6.4.0",
+    "requests>=2.32.5",
+    "sqlalchemy>=2.0.43",
+    "uvicorn[standard]>=0.35.0",
+]
