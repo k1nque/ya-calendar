@@ -1,6 +1,11 @@
 from sqlalchemy.orm import Session
 from . import models
 
+
+def get_student_by_id(db: Session, student_id: int):
+    return db.query(models.Student).filter_by(id=student_id).first()
+
+
 def get_or_create_student(db: Session, summary: str):
     s = db.query(models.Student).filter_by(summary=summary).first()
     if s:
