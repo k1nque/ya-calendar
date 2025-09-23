@@ -37,9 +37,9 @@ def get_principal(username, leg_token):
         raise
 
 
-def schedule_lesson(db, event_uid, summary, start_dt, end_dt, description):
+def schedule_lesson(db, event_uid, summary, start_dt, end_dt):
     student = crud.get_or_create_student(db, summary)
-    lesson, changed = crud.upsert_lesson(db, event_uid=event_uid, summary=summary, start=start_dt, end=end_dt, description=description, student=student)
+    lesson, changed = crud.upsert_lesson(db, event_uid=event_uid, summary=summary, start=start_dt, end=end_dt, student=student)
 
     notify_time = start_dt - timedelta(minutes=30)
     now = datetime.now(timezone.utc)
@@ -84,11 +84,10 @@ def parse_and_schedule():
                     uid = str(component.get('uid') or hashlib.sha1((summary+str(component.get('dtstart'))).encode()).hexdigest())
                     start = component.get('dtstart').dt
                     end = component.get('dtend').dt
-                    description = str(component.get('description') or '')
-                    schedule_lesson(db, uid, summary, start, end, description)
+                    schedule_lesson(db, uid, summary, start, end)
         db.close()
     except Exception as e:
-        print(f"Worker error in parse_and_schedule: {e}")
+        logging.error(f"Worker error in parse_and_schedule: {e}")
 
 
 if __name__ == '__main__':
@@ -101,6 +100,7 @@ if __name__ == '__main__':
     logging.getLogger().addFilter(CaldavNoiseFilter())
     while True:
         try:
+            logging.info('Worker running parse_and_schedule at %s', datetime.now())
             parse_and_schedule()
         except Exception as e:
             logging.error('Worker error: %s', e)

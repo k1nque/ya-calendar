@@ -1,6 +1,5 @@
 import logging
 from datetime import datetime, timedelta, timezone
-import hashlib
 from icalendar import Calendar
 import caldav
 
@@ -32,18 +31,25 @@ def debug_parse_events():
         for evt in events:
             calobj = Calendar.from_ical(evt.data)
             for component in calobj.walk():
-                if component.name == "VEVENT":
-                    summary = str(component.get('summary'))
-                    uid = str(component.get('uid') or hashlib.sha1((summary+str(component.get('dtstart'))).encode()).hexdigest())
-                    start = component.get('dtstart').dt
-                    end = component.get('dtend').dt
-                    description = str(component.get('description') or '')
-                    print(f"Event UID: {uid}")
-                    print(f"Summary: {summary}")
-                    print(f"Start: {start}")
-                    print(f"End: {end}")
-                    print(f"Description: {description}")
-                    print("-" * 50)
+                print(component.name)
+                if component.name == "DAYLIGHT":
+                    print(component)
+                # if component.name == "VEVENT":
+                #     summary = str(component.get('summary'))
+                #     uid = str(component.get('uid') or hashlib.sha1((summary+str(component.get('dtstart'))).encode()).hexdigest())
+                #     start = component.get('dtstart').dt
+                #     end = component.get('dtend').dt
+                #     description = str(component.get('description') or '')
+                #     print(f"Event UID: {uid}")
+                #     print(f"Summary: {summary}")
+                #     print(f"Start: {start}")
+                #     print(f"End: {end}")
+                #     print(f"Description: {description}")
+                #     print(f"Color: {str(component.get('color') or 'N/A')}")
+                #     print(component)
+                #     print("-" * 50)
+                print('----------')
+            print('-----------------------------------------------')
     except Exception as e:
         print(f"Error fetching events: {e}")
 

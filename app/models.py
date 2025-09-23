@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, UniqueConstraint
+from sqlalchemy import Boolean, Column, Integer, String, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from .db import Base
 
@@ -6,6 +6,8 @@ class Student(Base):
     __tablename__ = 'students'
     id = Column(Integer, primary_key=True, index=True)
     summary = Column(String, unique=True, nullable=False)
+    is_active = Column(Boolean, default=True)  # True - active, False - inactive
+    paid_lessons_count = Column(Integer, default=0)
     lessons = relationship('Lesson', back_populates='student')
 
 class Lesson(Base):
@@ -15,7 +17,7 @@ class Lesson(Base):
     summary = Column(String)
     start = Column(DateTime)
     end = Column(DateTime)
-    description = Column(Text)
+    is_paid = Column(Boolean, default=False)
     student_id = Column(Integer, ForeignKey('students.id'))
     student = relationship('Student', back_populates='lessons')
 
