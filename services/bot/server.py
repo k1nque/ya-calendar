@@ -100,6 +100,23 @@ async def notify(lesson_id: int = Body(..., embed=True), db=Depends(get_db)):
     return {"sent": sent}
 
 
+@app.post("/admin_notify")
+async def admin_notify(message: str = Body(..., embed=True)):
+    """Send notification message to admin.
+    
+    Body: {"message": "<text>"}
+    Returns: {"sent": <bool>}
+    """
+    from app.config import settings
+    
+    try:
+        await bot.send_message(settings.ADMIN_TELEGRAM_ID, message)
+        return {"sent": True}
+    except Exception as e:
+        logging.warning("Failed to send admin notification: %s", e)
+        return {"sent": False, "error": str(e)}
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
