@@ -42,30 +42,61 @@ def schedule_lesson(db, event_uid, summary, start_dt, end_dt):
     lesson, changed = crud.upsert_lesson(db, event_uid=event_uid, summary=summary, start=start_dt, end=end_dt, student=student)
 
     notify_time = start_dt - timedelta(minutes=30)
+    deduct_time = end_dt  # Списание после окончания урока
     now = datetime.now(timezone.utc)
-    if notify_time <= now:
-        return
-
-    key = f"scheduled:{event_uid}"
-    existing = r.hgetall(key)
-    start_ts = int(start_dt.timestamp())
-    if existing:
-        old_start = int(existing.get(b'start_ts', b'0'))
-        if old_start == start_ts:
-            return
-        # revoke old
-        old_task_id = existing.get(b'task_id')
-        if old_task_id:
-            try:
-                celery.control.revoke(old_task_id.decode(), terminate=True)
-            except Exception:
+    
+    # Schedule notification (existing logic)
+    if notify_time > now:
+        key = f"scheduled:{event_uid}"
+        existing = r.hgetall(key)
+        start_ts = int(start_dt.timestamp())
+        if existing:
+            old_start = int(existing.get(b'start_ts', b'0'))
+            if old_start == start_ts:
+                # Already scheduled for this start time, skip notification scheduling
                 pass
+            else:
+                # revoke old
+                old_task_id = existing.get(b'task_id')
+                if old_task_id:
+                    try:
+                        celery.control.revoke(old_task_id.decode(), terminate=True)
+                    except Exception:
+                        pass
+                # schedule new notification
+                eta = notify_time
+                res = celery.send_task('tasks.send_notify', args=[lesson.id], eta=eta)
+                r.hset(key, mapping={"task_id": res.id, "start_ts": start_ts})
+        else:
+            # schedule new notification
+            eta = notify_time
+            res = celery.send_task('tasks.send_notify', args=[lesson.id], eta=eta)
+            r.hset(key, mapping={"task_id": res.id, "start_ts": start_ts})
 
-    # schedule new
-    eta = notify_time
-    # send_task by name registered in celery worker
-    res = celery.send_task('tasks.send_notify', args=[lesson.id], eta=eta)
-    r.hset(key, mapping={"task_id": res.id, "start_ts": start_ts})
+    # Schedule lesson deduction after completion (new logic)
+    if deduct_time > now:
+        deduct_key = f"deduct:{event_uid}"
+        existing_deduct = r.hgetall(deduct_key)
+        end_ts = int(end_dt.timestamp())
+        
+        if existing_deduct:
+            old_end = int(existing_deduct.get(b'end_ts', b'0'))
+            if old_end == end_ts:
+                # Already scheduled for this end time, skip
+                return
+            else:
+                # revoke old deduct task
+                old_deduct_task_id = existing_deduct.get(b'deduct_task_id')
+                if old_deduct_task_id:
+                    try:
+                        celery.control.revoke(old_deduct_task_id.decode(), terminate=True)
+                    except Exception:
+                        pass
+        
+        # schedule new deduct task
+        eta_deduct = deduct_time
+        res_deduct = celery.send_task('tasks.deduct_lesson_after_completion', args=[lesson.id], eta=eta_deduct)
+        r.hset(deduct_key, mapping={"deduct_task_id": res_deduct.id, "end_ts": end_ts})
 
 
 def parse_and_schedule():

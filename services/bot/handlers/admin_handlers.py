@@ -21,6 +21,7 @@ async def cmd_start_admin(message: types.Message):
 /start - это сообщение
 /students - список всех учеников
 /inactive - управление активностью учеников
+/payment - управление оплаченными занятиями
 /help - справка по командам
 
 Вы также получаете уведомления о новых пользователях для привязки к ученикам.
@@ -37,6 +38,7 @@ async def cmd_help_admin(message: types.Message):
 /start - приветствие и список команд
 /students - показать список всех учеников с их статусами и количеством оплаченных занятий
 /inactive - управление активностью учеников (включить/выключить)
+/payment - управление оплаченными занятиями учеников
 /help - эта справка
 
 🔔 Автоматические уведомления:
@@ -163,3 +165,193 @@ async def process_toggle_active(callback_query: types.CallbackQuery):
         )
     finally:
         db.close()
+
+
+@dp.message(F.text == '/payment', IsAdmin)
+async def cmd_payment(message: types.Message):
+    """Команда /payment - управление оплаченными занятиями (только для администратора)"""
+    db = SessionLocal()
+    try:
+        students = crud.list_students(db)
+        if not students:
+            await message.answer("Нет учеников в базе.")
+            return
+        
+        kb = InlineKeyboardBuilder()
+        for s in students:
+            paid_count = s.paid_lessons_count
+            button_text = f"{s.summary} ({paid_count} оплачено)"
+            kb.button(text=button_text, callback_data=f"payment_select:{s.id}")
+        kb.adjust(1)
+        
+        await message.answer(
+            "💰 Выберите ученика для управления оплаченными занятиями:", 
+            reply_markup=kb.as_markup()
+        )
+    finally:
+        db.close()
+
+
+@dp.callback_query(F.data.startswith('payment_select:'), IsAdminCallback)
+async def process_payment_select(callback_query: types.CallbackQuery):
+    """Обработчик выбора ученика для управления платежами"""
+    data = callback_query.data.split(':')
+    if len(data) != 2:
+        await callback_query.answer('Неверные данные')
+        return
+    
+    student_id = int(data[1])
+    db = SessionLocal()
+    try:
+        student = crud.get_student_by_id(db, student_id)
+        if not student:
+            await callback_query.answer('Ученик не найден')
+            return
+        
+        student_summary = student.summary
+        paid_count = student.paid_lessons_count
+        
+        kb = InlineKeyboardBuilder()
+        # Кнопки для быстрого добавления
+        kb.button(text="➕1", callback_data=f"payment_add:{student_id}:1")
+        kb.button(text="➕4", callback_data=f"payment_add:{student_id}:4")
+        kb.button(text="➕8", callback_data=f"payment_add:{student_id}:8")
+        kb.button(text="➕12", callback_data=f"payment_add:{student_id}:12")
+        # Кнопки для вычитания
+        kb.button(text="➖1", callback_data=f"payment_subtract:{student_id}:1")
+        kb.button(text="➖5", callback_data=f"payment_subtract:{student_id}:5")
+        # Установить точное значение
+        kb.button(text="🔢 Установить точно", callback_data=f"payment_set:{student_id}")
+        # Назад к списку
+        kb.button(text="🔙 Назад к списку", callback_data="payment_back")
+        kb.adjust(4, 2, 1, 1)
+        
+        await callback_query.message.edit_text(
+            f"💰 Ученик: {student_summary}\n"
+            f"Оплаченных занятий: {paid_count}\n\n"
+            f"Выберите действие:",
+            reply_markup=kb.as_markup()
+        )
+    finally:
+        db.close()
+    await callback_query.answer()
+
+
+@dp.callback_query(F.data.startswith('payment_add:'), IsAdminCallback)
+async def process_payment_add(callback_query: types.CallbackQuery):
+    """Обработчик добавления оплаченных занятий"""
+    data = callback_query.data.split(':')
+    if len(data) != 3:
+        await callback_query.answer('Неверные данные')
+        return
+    
+    student_id = int(data[1])
+    add_count = int(data[2])
+    
+    db = SessionLocal()
+    try:
+        student = crud.get_student_by_id(db, student_id)
+        if not student:
+            await callback_query.answer('Ученик не найден')
+            return
+        
+        new_count = student.paid_lessons_count + add_count
+        updated_student = crud.update_student_paid_lessons(db, student_id, new_count)
+        
+        if updated_student:
+            await callback_query.answer(f"Добавлено {add_count} занятий. Всего: {new_count}")
+            # Обновляем сообщение
+            kb = InlineKeyboardBuilder()
+            kb.button(text="➕1", callback_data=f"payment_add:{student_id}:1")
+            kb.button(text="➕4", callback_data=f"payment_add:{student_id}:4")
+            kb.button(text="➕8", callback_data=f"payment_add:{student_id}:8")
+            kb.button(text="➕12", callback_data=f"payment_add:{student_id}:12")
+            kb.button(text="➖1", callback_data=f"payment_subtract:{student_id}:1")
+            kb.button(text="➖5", callback_data=f"payment_subtract:{student_id}:5")
+            kb.button(text="🔢 Установить точно", callback_data=f"payment_set:{student_id}")
+            kb.button(text="🔙 Назад к списку", callback_data="payment_back")
+            kb.adjust(4, 2, 1, 1)
+            
+            await callback_query.message.edit_text(
+                f"💰 Ученик: {updated_student.summary}\n"
+                f"Оплаченных занятий: {new_count}\n\n"
+                f"Выберите действие:",
+                reply_markup=kb.as_markup()
+            )
+        else:
+            await callback_query.answer('Ошибка при обновлении')
+    finally:
+        db.close()
+
+
+@dp.callback_query(F.data.startswith('payment_subtract:'), IsAdminCallback)
+async def process_payment_subtract(callback_query: types.CallbackQuery):
+    """Обработчик вычитания оплаченных занятий"""
+    data = callback_query.data.split(':')
+    if len(data) != 3:
+        await callback_query.answer('Неверные данные')
+        return
+    
+    student_id = int(data[1])
+    subtract_count = int(data[2])
+    
+    db = SessionLocal()
+    try:
+        student = crud.get_student_by_id(db, student_id)
+        if not student:
+            await callback_query.answer('Ученик не найден')
+            return
+        
+        new_count = max(0, student.paid_lessons_count - subtract_count)
+        updated_student = crud.update_student_paid_lessons(db, student_id, new_count)
+        
+        if updated_student:
+            await callback_query.answer(f"Вычтено {subtract_count} занятий. Всего: {new_count}")
+            # Обновляем сообщение
+            kb = InlineKeyboardBuilder()
+            kb.button(text="➕1", callback_data=f"payment_add:{student_id}:1")
+            kb.button(text="➕4", callback_data=f"payment_add:{student_id}:4")
+            kb.button(text="➕8", callback_data=f"payment_add:{student_id}:8")
+            kb.button(text="➕12", callback_data=f"payment_add:{student_id}:12")
+            kb.button(text="➖1", callback_data=f"payment_subtract:{student_id}:1")
+            kb.button(text="➖5", callback_data=f"payment_subtract:{student_id}:5")
+            kb.button(text="🔢 Установить точно", callback_data=f"payment_set:{student_id}")
+            kb.button(text="🔙 Назад к списку", callback_data="payment_back")
+            kb.adjust(4, 2, 1, 1)
+            
+            await callback_query.message.edit_text(
+                f"💰 Ученик: {updated_student.summary}\n"
+                f"Оплаченных занятий: {new_count}\n\n"
+                f"Выберите действие:",
+                reply_markup=kb.as_markup()
+            )
+        else:
+            await callback_query.answer('Ошибка при обновлении')
+    finally:
+        db.close()
+
+
+@dp.callback_query(F.data == 'payment_back', IsAdminCallback)
+async def process_payment_back(callback_query: types.CallbackQuery):
+    """Возврат к списку учеников для управления платежами"""
+    db = SessionLocal()
+    try:
+        students = crud.list_students(db)
+        if not students:
+            await callback_query.message.edit_text("Нет учеников в базе.")
+            return
+        
+        kb = InlineKeyboardBuilder()
+        for s in students:
+            paid_count = s.paid_lessons_count
+            button_text = f"{s.summary} ({paid_count} оплачено)"
+            kb.button(text=button_text, callback_data=f"payment_select:{s.id}")
+        kb.adjust(1)
+        
+        await callback_query.message.edit_text(
+            "💰 Выберите ученика для управления оплаченными занятиями:", 
+            reply_markup=kb.as_markup()
+        )
+    finally:
+        db.close()
+    await callback_query.answer()

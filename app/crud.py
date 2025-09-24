@@ -121,3 +121,15 @@ def mark_lesson_paid(db: Session, lesson_id: int, is_paid: bool = True):
         db.refresh(lesson)
         return lesson
     return None
+
+
+def deduct_paid_lesson(db: Session, student_id: int):
+    """Списать одно оплаченное занятие у ученика (если есть)"""
+    student = db.query(models.Student).filter_by(id=student_id).first()
+    if student and student.paid_lessons_count > 0:
+        student.paid_lessons_count -= 1
+        db.add(student)
+        db.commit()
+        db.refresh(student)
+        return student
+    return None
