@@ -76,28 +76,56 @@ async def on_shutdown():
 
 @app.post("/notify")
 async def notify(lesson_id: int = Body(..., embed=True), db=Depends(get_db)):
-    """Send a notification about a lesson to all linked Telegram users.
+    """Send a notification about a lesson to all linked Telegram users and admin.
 
     Body: {"lesson_id": <int>}
-    Returns: {"sent": <int>}
+    Returns: {"sent": <int>, "admin_notified": <bool>}
     """
+    from app.config import settings
+    
     lesson = crud.get_lesson(db, lesson_id)
     if not lesson:
         raise HTTPException(status_code=404, detail="lesson not found")
 
     links = crud.get_links_for_student(db, lesson.student_id)
-    text = f"Урок: {lesson.summary}\nНачало: {lesson.start}\nID: {lesson.id}"
-
+    
+    # Сообщение для учеников
+    student_text = f"Урок: {lesson.summary}\nНачало: {lesson.start}\nID: {lesson.id}"
+    
+    # Отправляем ученикам
     sent = 0
     for link in links:
         try:
-            await bot.send_message(int(link.tg_user_id), text)
+            await bot.send_message(int(link.tg_user_id), student_text)
             sent += 1
         except Exception as e:  # noqa: BLE001
             logging.debug("Failed to deliver to %s: %s", link.tg_user_id, e)
             continue
 
-    return {"sent": sent}
+    # Отправляем админу
+    admin_notified = False
+    try:
+        # Получаем информацию о ученике для админа
+        student_info = crud.get_student_by_id(db, lesson.student_id)
+        student_name = student_info.summary if student_info else "Неизвестный ученик"
+        remaining_lessons = student_info.paid_lessons_count if student_info else 0
+        
+        admin_text = (
+            f"📅 Напоминание об уроке\n\n"
+            f"Ученик: {student_name}\n"
+            f"Урок: {lesson.summary}\n"
+            f"Начало: {lesson.start}\n"
+            f"Оставшихся оплаченных занятий: {remaining_lessons}\n"
+            f"ID урока: {lesson.id}\n\n"
+            f"Уведомление отправлено {sent} пользователям."
+        )
+        
+        await bot.send_message(settings.ADMIN_TELEGRAM_ID, admin_text)
+        admin_notified = True
+    except Exception as e:  # noqa: BLE001
+        logging.warning("Failed to send admin notification: %s", e)
+
+    return {"sent": sent, "admin_notified": admin_notified}
 
 
 @app.post("/admin_notify")
