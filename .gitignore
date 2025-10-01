@@ -9,3 +9,8 @@ wheels/
 # Virtual environments
 .venv
 .env
+
+# Logs directory - keep structure but ignore log files
+logs/*.log
+logs/*.log.*
+!logs/README.md

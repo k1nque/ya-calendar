@@ -4,17 +4,10 @@
 import logging
 from aiogram import Bot, Dispatcher
 from app.config import settings
+from app.logging_config import setup_root_logging
 
-# Настройка логирования
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('bot.log', encoding='utf-8')
-    ]
-)
-logger = logging.getLogger(__name__)
+# Настройка логирования с ротацией по дням
+logger = setup_root_logging('bot', log_level=logging.INFO)
 
 # Создание экземпляров бота и диспетчера
 bot = Bot(token=settings.TG_BOT_TOKEN)

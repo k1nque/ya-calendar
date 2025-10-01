@@ -39,6 +39,7 @@ services:
     volumes:
       - ./app:/app/app
       - ./services/worker:/app/services/worker
+      - ./logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -55,6 +56,7 @@ services:
     volumes:
       - ./app:/app/app
       - ./services/celery_worker:/app/services/celery_worker
+      - ./logs:/app/logs
     depends_on:
       redis:
         condition: service_healthy
@@ -71,6 +73,7 @@ services:
     volumes:
       - ./app:/app/app
       - ./services/bot:/app/services/bot
+      - ./logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
