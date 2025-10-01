@@ -1,10 +1,22 @@
 import logging
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import hashlib
 import redis
 from icalendar import Calendar
 import caldav
+from dateutil.rrule import (
+    WEEKLY,
+    MO,
+    TU,
+    WE,
+    TH,
+    FR,
+    SA,
+    SU,
+    rrule,
+    weekday as rrule_weekday,
+)
 
 from app.config import settings
 from app.db import SessionLocal, engine
@@ -116,6 +128,126 @@ def schedule_lesson(db, event_uid, summary, start_dt, end_dt):
         logger.info(f"Scheduled deduction for lesson {event_uid} at {deduct_time} (task_id: {res_deduct.id})")
 
 
+ICAL_WEEKDAY_MAP = {
+    "MO": MO,
+    "TU": TU,
+    "WE": WE,
+    "TH": TH,
+    "FR": FR,
+    "SA": SA,
+    "SU": SU,
+}
+
+
+def _ensure_datetime(value, fallback_tz):
+    """Normalize ical values to timezone-aware datetime."""
+    if isinstance(value, datetime):
+        if value.tzinfo:
+            return value
+        if fallback_tz:
+            return value.replace(tzinfo=fallback_tz)
+        return value.replace(tzinfo=timezone.utc)
+    if isinstance(value, date):
+        dt = datetime.combine(value, datetime.min.time())
+        if fallback_tz:
+            return dt.replace(tzinfo=fallback_tz)
+        return dt.replace(tzinfo=timezone.utc)
+    raise TypeError(f"Unsupported date value: {value!r}")
+
+
+def _build_occurrence_uid(base_uid: str, occurrence_start: datetime) -> str:
+    """Build stable UID for a particular occurrence (one per day)."""
+    occurrence_date = occurrence_start.astimezone(timezone.utc).strftime("%Y%m%d")
+    return f"{base_uid}#{occurrence_date}"
+
+
+def expand_component_occurrences(component, summary: str, window_start: datetime, window_end: datetime):
+    """Expand VEVENT into concrete occurrences within the window."""
+    raw_start = component.get('dtstart')
+    if raw_start is None:
+        logger.warning("Skipping event without DTSTART: %s", summary)
+        return []
+
+    base_start = _ensure_datetime(raw_start.dt, None)
+    raw_end = component.get('dtend')
+
+    if raw_end is None:
+        duration = timedelta(hours=1)
+        base_end = base_start + duration
+        logger.debug("Event %s missing DTEND; using fallback duration 1h", summary)
+    else:
+        base_end = _ensure_datetime(raw_end.dt, base_start.tzinfo)
+        duration = base_end - base_start
+
+    raw_uid = component.get('uid')
+    base_uid = str(raw_uid) if raw_uid else hashlib.sha1((summary + str(base_start)).encode()).hexdigest()
+
+    rrule_field = component.get('rrule')
+    if not rrule_field:
+        if base_end < window_start or base_start > window_end:
+            return []
+        return [(_build_occurrence_uid(base_uid, base_start), base_start, base_end)]
+
+    freq_values = rrule_field.get('FREQ')
+    freq_value = freq_values[0].upper() if freq_values else None
+    if freq_value != 'WEEKLY':
+        logger.debug("Unsupported RRULE frequency %s for event %s; using single occurrence", freq_value, summary)
+        if base_end < window_start or base_start > window_end:
+            return []
+        return [(_build_occurrence_uid(base_uid, base_start), base_start, base_end)]
+
+    interval = int(rrule_field.get('INTERVAL', [1])[0])
+    byday_values = rrule_field.get('BYDAY') or []
+    byweekday = tuple(ICAL_WEEKDAY_MAP[day] for day in byday_values if day in ICAL_WEEKDAY_MAP)
+    if not byweekday:
+        byweekday = (rrule_weekday(base_start.weekday()),)
+
+    if base_start.tzinfo:
+        window_start_local = window_start.astimezone(base_start.tzinfo)
+        window_end_local = window_end.astimezone(base_start.tzinfo)
+    else:
+        window_start_local = window_start.replace(tzinfo=None)
+        window_end_local = window_end.replace(tzinfo=None)
+
+    until_values = rrule_field.get('UNTIL')
+    until_candidate = None
+    if until_values:
+        raw_until = until_values[0]
+        if hasattr(raw_until, 'dt'):
+            raw_until = raw_until.dt
+        until_candidate = _ensure_datetime(raw_until, base_start.tzinfo)
+
+    count_values = rrule_field.get('COUNT')
+    rule_kwargs = {
+        'freq': WEEKLY,
+        'dtstart': base_start,
+        'interval': interval,
+        'byweekday': byweekday,
+    }
+    if count_values:
+        rule_kwargs['count'] = int(count_values[0])
+    else:
+        until_limit = window_end_local
+        if until_candidate:
+            until_limit = min(until_candidate, window_end_local)
+        rule_kwargs['until'] = until_limit
+
+    recurrence = rrule(**rule_kwargs)
+    occurrence_starts = recurrence.between(window_start_local, window_end_local, inc=True)
+
+    # Ensure dtstart included if it falls inside window but between() misses it due to timezone math
+    if window_start_local <= base_start <= window_end_local and base_start not in occurrence_starts:
+        occurrence_starts.insert(0, base_start)
+
+    occurrences = []
+    for occ_start in occurrence_starts:
+        occ_end = occ_start + duration
+        occurrence_uid = _build_occurrence_uid(base_uid, occ_start)
+        occurrences.append((occurrence_uid, occ_start, occ_end))
+
+    return occurrences
+
+
 def parse_and_schedule():
     try:
         logger.info("Starting calendar parsing and scheduling...")
@@ -134,11 +266,13 @@ def parse_and_schedule():
             for component in calobj.walk():
                 if component.name == "VEVENT":
                     summary = str(component.get('summary'))
-                    uid = str(component.get('uid') or hashlib.sha1((summary+str(component.get('dtstart'))).encode()).hexdigest())
-                    start = component.get('dtstart').dt
-                    end = component.get('dtend').dt
-                    schedule_lesson(db, uid, summary, start, end)
-                    events_processed += 1
+                    occurrences = expand_component_occurrences(component, summary, start_date, end_date)
+                    if not occurrences:
+                        logger.debug("No occurrences within window for event %s", summary)
+                        continue
+                    for occurrence_uid, start, end in occurrences:
+                        schedule_lesson(db, occurrence_uid, summary, start, end)
+                        events_processed += 1
         
         logger.info(f"Successfully processed {events_processed} events")
         db.close()

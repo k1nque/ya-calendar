@@ -133,3 +133,28 @@ def deduct_paid_lesson(db: Session, student_id: int):
         db.refresh(student)
         return student
     return None
+
+
+def get_upcoming_lessons(db: Session, limit: int = 10):
+    """Получить список предстоящих уроков, отсортированных по времени начала"""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    return (
+        db.query(models.Lesson)
+        .filter(models.Lesson.start >= now)
+        .order_by(models.Lesson.start)
+        .limit(limit)
+        .all()
+    )
+
+
+def get_lessons_for_student(db: Session, student_id: int, upcoming_only: bool = True, limit: int = 10):
+    """Получить уроки для конкретного ученика"""
+    from datetime import datetime, timezone
+    query = db.query(models.Lesson).filter(models.Lesson.student_id == student_id)
+    
+    if upcoming_only:
+        now = datetime.now(timezone.utc)
+        query = query.filter(models.Lesson.start >= now)
+    
+    return query.order_by(models.Lesson.start).limit(limit).all()
